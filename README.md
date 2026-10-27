@@ -1,4 +1,4 @@
-# The Last Blade — native recompilation
+# The Last Blade â€” native recompilation
 
 A native static recompilation of **The Last Blade** (SNK, 1997, MVS/AES,
 MAME set `lastblad`, NGH-234), built on
@@ -14,7 +14,7 @@ executed in it.
 | Deliverable | Path | Size | SHA-256 |
 |---|---|---:|---|
 | Windows x64 | `dist/windows/TheLastBlade-Windows-x64/` | 49,196,544 B exe | `512dcb1ff4c5f3e0b848b978f450ca41a97d2b2ddf154e32724bb5d9fe246b6d` |
-| Steam Deck / Linux x86_64 | `dist/steamdeck/The Last Blade-SteamDeck-x86_64.AppImage` | 16,476,664 B | `ab29f9242aa2311623863245a0de9b077c466e85b03193fc61b47f718a3958a5` |
+| Steam Deck / Linux x86_64 | `dist/steamdeck/The Last Blade-SteamDeck-x86_64.AppImage` | 16,476,664 B | `ba0aa1f21f3da3faa165ad3190b61bbe74043085a67068bb0ce485d09c9edc36` |
 
 `dist/SHA256SUMS.txt` verifies every distributed file:
 
@@ -74,9 +74,9 @@ Expected: `result: all files verified`. The exact sizes, CRC32 and SHA1 are in
 | Coin | 5 (6 = P2) | Back / View |
 | Start | 1 (2 = P2) | Start |
 | Select | 3 | left shoulder |
-| Service / test | 9 / F2 | — |
-| Fullscreen | F11 or Alt+Enter | — |
-| Quit | Esc | — |
+| Service / test | 9 / F2 | â€” |
+| Fullscreen | F11 or Alt+Enter | â€” |
+| Quit | Esc | â€” |
 
 Two SDL GameControllers work: first connected is player 1, second player 2.
 Steam Input's default gamepad template presents the Deck as an Xbox pad, which
@@ -95,7 +95,7 @@ matches the layout above. On MVS you must insert a coin before Start works.
 | Fullscreen 1280x800 | content 1143x800, aspect 1.4287, pillarboxed |
 | Toolkit conformance | 59/60 on Windows and Linux (reference interpreter 59/60) |
 | Audio | Z80 + YM2610 WAV verified; 55,555 Hz stereo, peak -5.2 dBFS |
-| Steam Deck hardware | **untested** — no Deck was available |
+| Steam Deck hardware | **untested** â€” no Deck was available |
 
 Full measurements: `docs/compatibility.md`.
 

@@ -6,25 +6,25 @@ open-source components. The PolyForm Noncommercial 1.0.0 licence in
 (ROM layout, player glue, build/packaging scripts, docs and icon). It does
 not relicense any third-party component.
 
-The vendored toolkit in `neogeorecomp/` is NeoGeoRecomp v0.2.0, MIT,
-copyright 2026 sp00nznet and contributors, plus the generic local fixes
-listed in `docs/toolkit-patches.md`. Its original `LICENSE`, `NOTICE` and
-`LICENSES/` directory are preserved in place.
+The upstream toolkit is **NeoGeoRecomp v0.2.0**, MIT, copyright 2026
+sp00nznet and contributors, plus the generic local fixes listed in
+`docs/toolkit-patches.md`. Its source is not vendored in this repository;
+the release binaries link it statically. The original licence and notice
+texts are preserved under `LICENSES/`.
 
-| Component | Where | Licence | Copyright / notice |
-|---|---|---|---|
-| NeoGeoRecomp | `neogeorecomp/` | MIT | Copyright 2026 sp00nznet and contributors. See `neogeorecomp/LICENSE`, `neogeorecomp/NOTICE`. |
-| Musashi 68000 | `neogeorecomp/ext/musashi` | MIT | Copyright Karl Stenerud. See `neogeorecomp/LICENSES/Musashi.txt`. |
-| superzazu/z80 | `neogeorecomp/ext/z80` | MIT | Copyright Nicolas Allemand. See `neogeorecomp/LICENSES/z80.txt`. |
-| ymfm (YM2610) | `neogeorecomp/ext/ymfm` | BSD-3-Clause | Copyright Aaron Giles. See `neogeorecomp/LICENSES/ymfm.txt`. |
-| SDL2 | `deps/sdl2` (Windows), system SDL2 (Linux) | zlib | Copyright 1997-2025 Sam Lantinga. See `packaging/SDL2.txt`. |
+| Component | Licence | Copyright / notice |
+|---|---|---|
+| NeoGeoRecomp | MIT | Copyright 2026 sp00nznet and contributors. See `LICENSES/neogeorecomp.txt` and `LICENSES/neogeorecomp-NOTICE.txt`. |
+| Musashi 68000 | MIT | Copyright Karl Stenerud. See `LICENSES/Musashi.txt`. |
+| superzazu/z80 | MIT | Copyright Nicolas Allemand. See `LICENSES/z80.txt`. |
+| ymfm (YM2610) | BSD-3-Clause | Copyright Aaron Giles. See `LICENSES/ymfm.txt`. |
+| SDL2 | zlib | Copyright 1997-2025 Sam Lantinga. See `LICENSES/SDL2.txt`. |
 
 ## Local changes to the toolkit
 
 Three generic runtime/window patches from the reference port plus one new
-reproducibility patch are applied to the vendored NeoGeoRecomp copy. They
-are recorded as unified diffs in `patches/` and explained in
-`docs/toolkit-patches.md`:
+reproducibility patch are applied to NeoGeoRecomp v0.2.0. They are recorded
+as unified diffs in `patches/` and explained in `docs/toolkit-patches.md`:
 
 1. **Generic runtime and fullscreen** - watchdog reset handling, correct
    interpretation when a non-zero P-ROM bank is selected, odd-PC dispatch,
