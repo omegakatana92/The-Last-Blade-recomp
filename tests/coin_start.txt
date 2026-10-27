@@ -1,0 +1,8 @@
+# The Last Blade - boot to a match: coin, start, skip the intro, pick the
+# default character and stage.
+900 coin
+1000 start
+1500 start
+3000 start
+3400 a
+4000-4020 a

@@ -1,0 +1,44 @@
+diff --git a/tests/gamepad_test.c b/tests/gamepad_test.c
+old mode 100644
+new mode 100755
+index 049c452..489a0ba
+--- a/tests/gamepad_test.c
++++ b/tests/gamepad_test.c
+@@ -22,6 +22,10 @@ static ng_input_t frame(void) {
+     return in;
+ }
+ 
++#if SDL_VERSION_ATLEAST(2, 26, 0)
++/* SDL's virtual joystick API (SDL_VirtualJoystickDesc) only exists from
++ * SDL 2.26. Distributions that ship an older SDL2 (Ubuntu 22.04 has 2.0.20)
++ * still build this test; it reports itself skipped instead of failing. */
+ static SDL_Joystick *attach(void) {
+     SDL_VirtualJoystickDesc d;
+     SDL_zero(d);
+@@ -33,11 +37,19 @@ static SDL_Joystick *attach(void) {
+     int dev = SDL_JoystickAttachVirtualEx(&d);
+     return dev < 0 ? NULL : SDL_JoystickOpen(dev);
+ }
++#endif
+ 
+ int main(void) {
+     SDL_setenv("SDL_VIDEODRIVER", "dummy", 1);
+     SDL_setenv("SDL_AUDIODRIVER", "dummy", 1);
+-    if (window_open("gamepad test", 1) != 0) return 1;
++    if (window_open("gamepad test", 1, 0) != 0) return 1;
++
++#if !SDL_VERSION_ATLEAST(2, 26, 0)
++    fprintf(stderr, "gamepad: SDL %d.%d.%d has no virtual joystick API; skipped\n",
++            SDL_MAJOR_VERSION, SDL_MINOR_VERSION, SDL_PATCHLEVEL);
++    window_close();
++    return 0;
++#else
+ 
+     SDL_Joystick *p1 = attach(), *p2 = attach();
+     if (!p1 || !p2) { fprintf(stderr, "FAIL: no virtual joystick: %s\n", SDL_GetError()); return 1; }
+@@ -76,4 +88,5 @@ int main(void) {
+     if (failures) return 1;
+     printf("gamepad: all checks pass\n");
+     return 0;
++#endif
+ }

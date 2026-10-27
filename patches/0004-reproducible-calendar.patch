@@ -1,0 +1,126 @@
+diff --git a/src/io.c b/src/io.c
+--- a/src/io.c
++++ b/src/io.c
+@@ -34,7 +34,28 @@
+ 
+ static uint8_t bcd(int v) { return (uint8_t)(((v / 10) << 4) | (v % 10)); }
+ 
++/* Fixed calendar for reproducible runs.  The real uPD4990A keeps the
++ * current date, and a game may seed its RNG from it, so two runs a second
++ * apart can diverge.  --rtc pins the date without changing the default:
++ * with no option the host's local time is used, as on hardware. */
++static int      s_rtc_fixed;
++static uint64_t s_rtc_fixed_reg;
++
++void io_set_rtc_fixed(int year, int mon, int mday, int hour, int min, int sec) {
++    static const int t[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
++    int y = year, m = mon;
++    if (m < 3) y -= 1;
++    int wday = (y + y / 4 - y / 100 + y / 400 + t[(m - 1) & 15] + mday) % 7;
++    if (wday < 0) wday += 7;
++    s_rtc_fixed_reg = (uint64_t)bcd(sec) | ((uint64_t)bcd(min) << 8) |
++                      ((uint64_t)bcd(hour) << 16) | ((uint64_t)bcd(mday) << 24) |
++                      ((uint64_t)(wday & 0xF) << 32) | ((uint64_t)(mon & 0xF) << 36) |
++                      ((uint64_t)bcd(year % 100) << 40);
++    s_rtc_fixed = 1;
++}
++
+ static uint64_t rtc_now(void) {
++    if (s_rtc_fixed) return s_rtc_fixed_reg;
+     time_t t = time(NULL);
+     struct tm tmv;
+ #ifdef _WIN32
+
+diff --git a/src/neogeo.c b/src/neogeo.c
+--- a/src/neogeo.c
++++ b/src/neogeo.c
+@@ -25,6 +25,7 @@
+ #define MAX_SHOTS 64
+ typedef struct {
+     const char *rom_path, *bios_path, *record, *input, *dump_misses, *bios_name, *wav;
++    const char *rtc;
+     int headless, interp, verify, scale, mute, fullscreen;
+     long frames;
+     struct { long frame; const char *path; } shots[MAX_SHOTS];
+@@ -47,6 +48,7 @@
+         "  --dump-misses FILE    write interpreted entry points for the recompiler\n"
+         "  --scale N             window scale (default 3)\n"
+         "  --fullscreen          start fullscreen (F11 toggles)\n"
++        "  --rtc YYYY-MM-DDTHH:MM:SS  fixed calendar time for reproducible runs\n"
+         "  --wav FILE            write the audio to a WAV file\n"
+         "  --mute                no sound from the window\n", prog);
+ }
+@@ -69,6 +71,7 @@
+         else if (!strcmp(a, "--dump-misses") && next) { o->dump_misses = next; i++; }
+         else if (!strcmp(a, "--scale") && next) { o->scale = atoi(next); i++; }
+         else if (!strcmp(a, "--fullscreen")) o->fullscreen = 1;
++        else if (!strcmp(a, "--rtc") && next) { o->rtc = next; i++; }
+         else if (!strcmp(a, "--wav") && next) { o->wav = next; i++; }
+         else if (!strcmp(a, "--mute")) o->mute = 1;
+         else if (!strcmp(a, "--screenshot") && next) {
+@@ -82,6 +85,17 @@
+         else { usage(argv[0]); return -1; }
+     }
+     if (!o->bios_path) o->bios_path = o->rom_path;
++    return 0;
++}
++
++/* --rtc takes a fixed local calendar time, used for the uPD4990A.  It makes
++ * a run reproducible even for games that seed from the clock. */
++static int parse_rtc(const char *s, int v[6]) {
++    int n = sscanf(s, "%d-%d-%dT%d:%d:%d", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]);
++    if (n != 6 || v[0] < 1970 || v[0] > 2099 || v[1] < 1 || v[1] > 12 ||
++        v[2] < 1 || v[2] > 31 || v[3] < 0 || v[3] > 23 ||
++        v[4] < 0 || v[4] > 59 || v[5] < 0 || v[5] > 59)
++        return -1;
+     return 0;
+ }
+ 
+@@ -245,6 +259,14 @@
+ 
+     ng_board_t board = {prom, game->prom_size, bios, 1};
+     bus_init(&board);
++    if (o.rtc) {
++        int v[6];
++        if (parse_rtc(o.rtc, v)) {
++            fprintf(stderr, "error: --rtc wants YYYY-MM-DDTHH:MM:SS\n");
++            return 2;
++        }
++        io_set_rtc_fixed(v[0], v[1], v[2], v[3], v[4], v[5]);
++    }
+     io_reset(1);
+     video_load(crom, game->crom_size, srom, srom_sz, sfix, lo);
+     free(crom);
+
+diff --git a/src/ng_internal.h b/src/ng_internal.h
+--- a/src/ng_internal.h
++++ b/src/ng_internal.h
+@@ -61,6 +61,7 @@
+ 
+ /* ---- I/O ports, system latch, RTC (io.c) ---- */
+ void    io_reset(int mvs);
++void    io_set_rtc_fixed(int year, int mon, int mday, int hour, int min, int sec);
+ uint8_t io_read8(uint32_t addr);
+ void    io_write8(uint32_t addr, uint8_t v);
+ void    io_set_inputs(const ng_input_t *in);
+
+diff --git a/docs/running.md b/docs/running.md
+--- a/docs/running.md
++++ b/docs/running.md
+@@ -32,9 +32,15 @@
+   --dump-misses FILE    write interpreted entry points for the recompiler
+   --scale N             window scale (default 3)
+   --fullscreen          start fullscreen (F11 or Alt+Enter toggles)
++  --rtc YYYY-MM-DDTHH:MM:SS  fixed calendar time for reproducible runs
+ ```
+ 
+ Frame numbers count 59.19 Hz video frames from power-on. The MVS BIOS eyecatcher finishes at about frame 600, and Metal Slug's title appears at about frame 1200.
++
++The uPD4990A calendar follows the host's local clock by default, as the real
++chip does. A game may seed its randomness from it, so two runs a second apart
++can take different paths. Pass `--rtc 1997-12-19T12:00:00` when a run has to
++be reproducible (headless tests, `--verify`, screenshots).
+ 
+ ## Windowed play
+ 
+

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=The Last Blade
+GenericName=Neo Geo fighting game (native recompilation)
+Comment=Native static recompilation of The Last Blade
+Exec=TheLastBlade
+Icon=thelastblade
+Categories=Game;ArcadeGame;
+Terminal=false
+X-AppImage-Name=The Last Blade
+X-AppImage-Version=0.1.0

@@ -1,0 +1,41 @@
+diff --git a/src/window_sdl.c b/src/window_sdl.c
+old mode 100644
+new mode 100755
+index a2a854d..c77e828
+--- a/src/window_sdl.c
++++ b/src/window_sdl.c
+@@ -55,9 +55,34 @@ int window_open(const char *title, int scale, int fullscreen) {
+     if (s_fullscreen) flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+     s_win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                              NG_SCREEN_W * scale, NG_SCREEN_H * scale, flags);
++    if (!s_win) {
++        fprintf(stderr, "error: SDL_CreateWindow: %s\n", SDL_GetError());
++        SDL_Quit();
++        return -1;
++    }
+     s_ren = SDL_CreateRenderer(s_win, -1, SDL_RENDERER_ACCELERATED);
++    if (!s_ren) {
++        fprintf(stderr, "warning: no accelerated renderer (%s); trying software\n", SDL_GetError());
++        s_ren = SDL_CreateRenderer(s_win, -1, SDL_RENDERER_SOFTWARE);
++    }
++    if (!s_ren) {
++        fprintf(stderr, "error: SDL_CreateRenderer: %s\n", SDL_GetError());
++        SDL_DestroyWindow(s_win);
++        s_win = NULL;
++        SDL_Quit();
++        return -1;
++    }
+     s_tex = SDL_CreateTexture(s_ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
+                               NG_SCREEN_W, NG_SCREEN_H);
++    if (!s_tex) {
++        fprintf(stderr, "error: SDL_CreateTexture: %s\n", SDL_GetError());
++        SDL_DestroyRenderer(s_ren);
++        SDL_DestroyWindow(s_win);
++        s_ren = NULL;
++        s_win = NULL;
++        SDL_Quit();
++        return -1;
++    }
+     /* Keep the 320x224 pixels crisp when scaled. */
+     SDL_SetTextureScaleMode(s_tex, SDL_ScaleModeNearest);
+     s_next_tick = SDL_GetPerformanceCounter();

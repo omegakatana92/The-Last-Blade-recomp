@@ -1,0 +1,30 @@
+# User-supplied game data and BIOS files are never committed.
+roms/
+*.p1
+*.p2
+*.sp2
+*.s1
+*.m1
+*.v1
+*.v2
+*.v3
+*.v4
+*.c1
+*.c2
+*.c3
+*.c4
+*.c5
+*.c6
+*.lo
+*.sfix
+*.rom
+
+# Build trees, generated C and recompiler output are private.
+build*/
+generated/
+entries*.txt
+
+# Local test artifacts.
+*.log
+*.wav
+*.mp4

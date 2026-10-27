@@ -1,0 +1,119 @@
+# The Last Blade - long soak (24000 frames, ~6:45).
+# Repeated coin/start cycles: each walks the BIOS coin check, the intro,
+# HOW TO PLAY pages, ability/character select and a match, then mixes
+# movement and A/B/C/D. Used by the `profile` target and by --verify;
+# deterministic for a given build.
+
+# --- cycle 1: frame 900 ---
+900 coin
+920 coin
+1000 start
+1600 start
+1900 start
+2100 a
+2500-2680 right
+2520 a
+2560 b
+2600 c
+2640 d
+2700-2760 down
+2800-2880 left
+2820 a
+3000 a
+3200 b
+3400 c
+
+# --- cycle 2: frame 4900 ---
+4900 coin
+4920 coin
+5000 start
+5600 start
+5900 start
+6100 a
+6500-6680 right
+6520 a
+6560 b
+6600 c
+6640 d
+6700-6760 down
+6800-6880 left
+6820 a
+7000 a
+7200 b
+7400 c
+
+# --- cycle 3: frame 8900 ---
+8900 coin
+8920 coin
+9000 start
+9600 start
+9900 start
+10100 a
+10500-10680 right
+10520 a
+10560 b
+10600 c
+10640 d
+10700-10760 down
+10800-10880 left
+10820 a
+11000 a
+11200 b
+11400 c
+
+# --- cycle 4: frame 12900 ---
+12900 coin
+12920 coin
+13000 start
+13600 start
+13900 start
+14100 a
+14500-14680 right
+14520 a
+14560 b
+14600 c
+14640 d
+14700-14760 down
+14800-14880 left
+14820 a
+15000 a
+15200 b
+15400 c
+
+# --- cycle 5: frame 16900 ---
+16900 coin
+16920 coin
+17000 start
+17600 start
+17900 start
+18100 a
+18500-18680 right
+18520 a
+18560 b
+18600 c
+18640 d
+18700-18760 down
+18800-18880 left
+18820 a
+19000 a
+19200 b
+19400 c
+
+# --- cycle 6: frame 20900 ---
+20900 coin
+20920 coin
+21000 start
+21600 start
+21900 start
+22100 a
+22500-22680 right
+22520 a
+22560 b
+22600 c
+22640 d
+22700-22760 down
+22800-22880 left
+22820 a
+23000 a
+23200 b
+23400 c

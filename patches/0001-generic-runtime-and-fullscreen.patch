@@ -1,0 +1,423 @@
+diff --git a/docs/running.md b/docs/running.md
+index d487725..a56c917 100644
+--- a/docs/running.md
++++ b/docs/running.md
+@@ -31,13 +31,14 @@ error: missing ROM files; see docs/running.md for the expected set
+   --verify              re-run every recompiled block in the interpreter and compare
+   --dump-misses FILE    write interpreted entry points for the recompiler
+   --scale N             window scale (default 3)
++  --fullscreen          start fullscreen (F11 or Alt+Enter toggles)
+ ```
+ 
+ Frame numbers count 59.19 Hz video frames from power-on. The MVS BIOS eyecatcher finishes at about frame 600, and Metal Slug's title appears at about frame 1200.
+ 
+ ## Windowed play
+ 
+-Keys: arrows; **Z X C V** = A B C D; **5** = coin; **1** = start (P1); **2** = start (P2); **3** = select; **9** = service; **F2** = test switch; **Esc** = quit.
++Keys: arrows; **Z X C V** = A B C D; **5** = coin; **1** = start (P1); **2** = start (P2); **3** = select; **9** = service; **F2** = test switch; **F11** (or **Alt+Enter**) = toggle fullscreen; **Esc** = quit.
+ 
+ Gamepads work beside the keyboard: the first one connected is player 1, the second player 2, and they can be plugged in while the game runs. D-pad or left stick; **A B X Y** (Xbox layout; the same positions on any pad SDL knows) = Neo Geo **A B C D**; **Start** = start; **Back** = coin; **left shoulder** = select. The layout is fixed for now (remapping is on the roadmap). A pad SDL doesn't recognise can be described with the `SDL_GAMECONTROLLERCONFIG` environment variable (SDL's own mapping format). `--mute` turns the sound off; `--wav FILE` writes it to a file, also headless.
+ 
+diff --git a/include/neogeorecomp/bus.h b/include/neogeorecomp/bus.h
+index 5b7cb2d..82bca75 100644
+--- a/include/neogeorecomp/bus.h
++++ b/include/neogeorecomp/bus.h
+@@ -90,6 +90,24 @@ uint8_t *bus_backup_ram(void);      /* 64 KB MVS backup RAM */
+ void bus_select_bios_vectors(int bios);
+ void bus_set_backup_lock(int locked);
+ 
++/* Current P-ROM bank: the byte offset of the 1 MB window inside the banked
++ * image.  0 is the first banked megabyte, which is what the recompiler
++ * analyses.  Other banks must run in the interpreter, because a native
++ * entry is tied to the bytes of one bank, not to the window address. */
++uint32_t bus_bank_offset(void);
++
++/* ---- watchdog ----
++ * A write with the low address bit set in $300000-$3BFFFF strokes the
++ * watchdog; if it is not stroked again within 3,244,030 master clocks
++ * (1,622,015 68000 clocks) the board resets.  Several carts use that reset
++ * as part of their first-boot backup-RAM initialisation: they clear the
++ * SRAM, then idle until the watchdog restarts the machine with valid RAM.
++ * bus_watchdog_expired() is polled by the frame scheduler. */
++#define NG_WATCHDOG_CLOCKS 1622015
++void bus_watchdog_kick(void);
++void bus_watchdog_disable(void);
++int  bus_watchdog_expired(void);
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/src/bus.c b/src/bus.c
+index be9267b..d020140 100644
+--- a/src/bus.c
++++ b/src/bus.c
+@@ -27,6 +27,17 @@ static uint8_t s_vec_page[0x10000];   /* page 0 with the BIOS vectors swapped in
+ static int s_bios_vectors = 1;
+ static int s_backup_locked = 1;
+ static uint32_t s_bank;               /* offset into prom of the $200000 window */
++static int64_t s_watchdog_deadline = INT64_MAX;
++
++void bus_watchdog_kick(void) {
++    s_watchdog_deadline = ng_cycles + NG_WATCHDOG_CLOCKS;
++}
++void bus_watchdog_disable(void) {
++    s_watchdog_deadline = INT64_MAX;
++}
++int bus_watchdog_expired(void) {
++    return ng_cycles >= s_watchdog_deadline;
++}
+ 
+ /* The maps the mutators below edit: the live ones, or the saved copies
+  * while an access log is being recorded (the live ones are all NULL then). */
+@@ -37,6 +48,7 @@ static uint8_t **W(void) { return s_logging ? s_real_w : ng_wmap; }
+ 
+ uint8_t *bus_wram(void) { return s_wram; }
+ uint8_t *bus_backup_ram(void) { return s_backup; }
++uint32_t bus_bank_offset(void) { return s_bank; }
+ 
+ static uint8_t *prom_page(uint32_t page) {
+     /* Fixed area: P ROMs smaller than 1 MB mirror through it. */
+@@ -82,6 +94,7 @@ void bus_init(const ng_board_t *board) {
+ 
+ void bus_reset(void) {
+     s_bank = 0;
++    bus_watchdog_disable();
+     map_bank();
+     bus_select_bios_vectors(1);
+     bus_set_backup_lock(1);
+diff --git a/src/exec.c b/src/exec.c
+index 1599c91..2d9511a 100644
+--- a/src/exec.c
++++ b/src/exec.c
+@@ -71,6 +71,13 @@ static ng_func_t *slot(uint32_t a) {
+ }
+ 
+ static inline ng_func_t lookup(uint32_t a) {
++    /* An odd PC is a 68000 address error, not the even instruction below
++     * it.  Let Musashi take the exception instead of aliasing the entry. */
++    if (a & 1) return NULL;
++    /* Recompiled bank-window code is the first banked megabyte.  When the
++     * cart has another bank selected, the bytes at that address are
++     * different code, so interpretation is the only correct path. */
++    if (a >= 0x200000 && a < 0x300000 && bus_bank_offset() != 0) return NULL;
+     ng_func_t *s = slot(a);
+     return s ? *s : NULL;
+ }
+@@ -149,6 +156,10 @@ static void from_musashi(void) {
+ }
+ 
+ static void note_miss(uint32_t a) {
++    if (a & 1) return;
++    /* A miss in a non-zero bank is not an address the recompiler can add:
++     * it analyses the first banked megabyte only. */
++    if (a >= 0x200000 && a < 0x300000 && bus_bank_offset() != 0) return;
+     ng_func_t *s = slot(a);
+     if (!s) return;
+     size_t bit = (size_t)(s - s_tab_fixed);
+@@ -353,13 +364,17 @@ void exec_reset(void) {
+ }
+ 
+ void exec_report(void) {
+-    uint64_t total = exec_native_blocks + exec_interp_instrs;
++    uint64_t total = ng_icount + exec_interp_instrs;   /* instruction coverage */
+     if (s_verify)
+         fprintf(stderr, "[verify] %llu blocks checked, %llu mismatches\n",
+                 (unsigned long long)s_verify_blocks, (unsigned long long)s_verify_fails);
+     if (getenv("NG_PROFILE")) profile_print();
+     fprintf(stderr, "[exec] native blocks %llu, interpreted instructions %llu, %zu uncovered entry points\n",
+             (unsigned long long)exec_native_blocks, (unsigned long long)exec_interp_instrs, s_nmiss);
++    if (total)
++        fprintf(stderr, "[coverage] native instructions %llu, interpreted %llu, %.3f%% native\n",
++                (unsigned long long)ng_icount, (unsigned long long)exec_interp_instrs,
++                100.0 * (double)ng_icount / (double)total);
+     (void)total;
+ }
+ 
+diff --git a/src/io.c b/src/io.c
+index dd74dba..890bda0 100644
+--- a/src/io.c
++++ b/src/io.c
+@@ -140,7 +140,9 @@ static void system_latch(uint32_t a) {
+ 
+ void io_write8(uint32_t a, uint8_t v) {
+     switch (a & 0xFE0000) {
+-    case 0x300000: break;                            /* watchdog kick */
++    case 0x300000:
++        if (a & 1) bus_watchdog_kick();              /* $300001: strobe the watchdog */
++        break;
+     case 0x320000: if (!(a & 1)) audio_command(v); break;
+     case 0x380000:
+         if ((a & 0x7F) == 0x51) rtc_write(v);        /* other latches: LEDs, coin counters */
+diff --git a/src/neogeo.c b/src/neogeo.c
+index 3d16236..15b359e 100644
+--- a/src/neogeo.c
++++ b/src/neogeo.c
+@@ -25,7 +25,7 @@ static uint32_t s_fb[NG_SCREEN_W * NG_SCREEN_H];
+ #define MAX_SHOTS 64
+ typedef struct {
+     const char *rom_path, *bios_path, *record, *input, *dump_misses, *bios_name, *wav;
+-    int headless, interp, verify, scale, mute;
++    int headless, interp, verify, scale, mute, fullscreen;
+     long frames;
+     struct { long frame; const char *path; } shots[MAX_SHOTS];
+     int nshots;
+@@ -46,6 +46,7 @@ static void usage(const char *prog) {
+         "  --verify              re-run every recompiled block in the interpreter and compare\n"
+         "  --dump-misses FILE    write interpreted entry points for the recompiler\n"
+         "  --scale N             window scale (default 3)\n"
++        "  --fullscreen          start fullscreen (F11 toggles)\n"
+         "  --wav FILE            write the audio to a WAV file\n"
+         "  --mute                no sound from the window\n", prog);
+ }
+@@ -67,6 +68,7 @@ static int parse_args(int argc, char **argv, options_t *o) {
+         else if (!strcmp(a, "--verify")) o->verify = 1;
+         else if (!strcmp(a, "--dump-misses") && next) { o->dump_misses = next; i++; }
+         else if (!strcmp(a, "--scale") && next) { o->scale = atoi(next); i++; }
++        else if (!strcmp(a, "--fullscreen")) o->fullscreen = 1;
+         else if (!strcmp(a, "--wav") && next) { o->wav = next; i++; }
+         else if (!strcmp(a, "--mute")) o->mute = 1;
+         else if (!strcmp(a, "--screenshot") && next) {
+@@ -167,11 +169,14 @@ static void run_until(int64_t t) {
+     }
+ }
+ 
+-static void run_frame(void) {
++/* Run one frame. Returns 1 when the watchdog expired during it: the board
++ * has reset, and the caller must restart the CPU before the next frame. */
++static int run_frame(void) {
+     int64_t fs = ng_frame_start;
+     for (int line = 0; line < NG_LINES_PER_FRAME; line++) {
+         int64_t ls = fs + (int64_t)line * NG_CLOCKS_PER_LINE;
+         run_until(ls);
++        if (bus_watchdog_expired()) return 1;
+         if (line >= NG_FIRST_VISIBLE && line < NG_VBLANK_LINE)
+             video_render_line(line - NG_FIRST_VISIBLE, s_fb + (line - NG_FIRST_VISIBLE) * NG_SCREEN_W);
+         if (line == NG_VBLANK_LINE) {
+@@ -182,11 +187,12 @@ static void run_frame(void) {
+     ng_frame_start = fs + NG_CLOCKS_PER_FRAME;
+     run_until(ng_frame_start);
+     audio_sync();
++    return bus_watchdog_expired();
+ }
+ 
+-static void power_on(void) {
+-    ng_cycles = 0;
+-    ng_frame_start = 0;
++/* Reset the CPU and the board without losing work RAM or battery-backed
++ * backup RAM, as the MVS reset line does. */
++static void board_reset(void) {
+     bus_reset();
+     lspc_reset();
+     pal_select_bank(0);
+@@ -194,7 +200,14 @@ static void power_on(void) {
+     audio_select_bios_rom(1);
+     audio_reset();
+     exec_reset();
+-    ng_irq_pending = 4;        /* IRQ3 is asserted at power-on until the BIOS acks it */
++    ng_irq_pending = 4;        /* IRQ3 is asserted on reset until the BIOS acks it */
++    ng_frame_start = ng_cycles;
++}
++
++static void power_on(void) {
++    ng_cycles = 0;
++    ng_frame_start = 0;
++    board_reset();
+ }
+ 
+ int ng_main(int argc, char **argv, const ng_game_t *game,
+@@ -238,7 +251,7 @@ int ng_main(int argc, char **argv, const ng_game_t *game,
+     audio_init(m1, m1_sz, sm1, vroms, vsizes, nv);
+     exec_init(funcs, nfuncs, o.interp || nfuncs == 0);
+     exec_set_verify(o.verify);
+-    if (platform_init(game->title, o.scale, o.headless, o.record)) return 1;
++    if (platform_init(game->title, o.scale, o.headless, o.record, o.fullscreen)) return 1;
+     if (o.mute) platform_mute();
+     if (o.wav && platform_wav(o.wav)) return 1;
+ 
+@@ -253,7 +266,8 @@ int ng_main(int argc, char **argv, const ng_game_t *game,
+         if (!platform_frame(frame == 0 ? NULL : s_fb, &in)) break;
+         script_input(frame, &in);
+         io_set_inputs(&in);
+-        run_frame();
++        if (run_frame())
++            board_reset();
+         platform_audio(samples, audio_take_samples(samples, 4096));
+         for (int i = 0; i < o.nshots; i++)
+             if (o.shots[i].frame == frame) {
+@@ -266,6 +280,8 @@ int ng_main(int argc, char **argv, const ng_game_t *game,
+     platform_frame(s_fb, &(ng_input_t){0});
+ 
+     exec_report();
++    if (getenv("NG_TIMING"))
++        fprintf(stderr, "[timing] %lld 68000 clocks simulated\n", (long long)ng_cycles);
+     if (o.dump_misses) exec_dump_misses(o.dump_misses);
+     platform_shutdown();
+     video_shutdown();
+diff --git a/src/ng_internal.h b/src/ng_internal.h
+index 7031a9e..87ace3d 100644
+--- a/src/ng_internal.h
++++ b/src/ng_internal.h
+@@ -90,7 +90,7 @@ extern uint64_t exec_native_blocks, exec_interp_instrs;
+ 
+ /* ---- host platform (platform.c) ---- */
+ void platform_early_init(void);       /* crash reporting; call first */
+-int  platform_init(const char *title, int scale, int headless, const char *record_path);
++int  platform_init(const char *title, int scale, int headless, const char *record_path, int fullscreen);
+ bool platform_frame(const uint32_t *fb, ng_input_t *in);  /* false = quit */
+ void platform_audio(const int16_t *samples, size_t frames);
+ int  platform_wav(const char *path);      /* also write the audio to a WAV file */
+@@ -99,7 +99,7 @@ void platform_shutdown(void);
+ int  write_png(const char *path, const uint32_t *argb, int w, int h);
+ 
+ /* ---- window (window_sdl.c, or stubs in platform.c without SDL2) ---- */
+-int  window_open(const char *title, int scale);
++int  window_open(const char *title, int scale, int fullscreen);
+ bool window_frame(const uint32_t *fb, ng_input_t *in);   /* false = quit */
+ void window_audio(const int16_t *samples, size_t frames);
+ void window_close(void);
+diff --git a/src/platform.c b/src/platform.c
+index 95c3e41..ad997a2 100644
+--- a/src/platform.c
++++ b/src/platform.c
+@@ -68,8 +68,8 @@ static FILE *s_rec;
+ /* The window lives in window_sdl.c; builds without SDL2 get these stubs
+  * and run headless only. */
+ #ifndef NG_HAVE_SDL
+-int  window_open(const char *title, int scale) {
+-    (void)title; (void)scale;
++int  window_open(const char *title, int scale, int fullscreen) {
++    (void)title; (void)scale; (void)fullscreen;
+     fprintf(stderr, "error: built without SDL2; run with --headless\n");
+     return -1;
+ }
+@@ -78,7 +78,7 @@ void window_audio(const int16_t *samples, size_t frames) { (void)samples; (void)
+ void window_close(void) {}
+ #endif
+ 
+-int platform_init(const char *title, int scale, int headless, const char *record_path) {
++int platform_init(const char *title, int scale, int headless, const char *record_path, int fullscreen) {
+     s_headless = headless;
+     if (record_path) {
+         char cmd[1024];
+@@ -89,7 +89,7 @@ int platform_init(const char *title, int scale, int headless, const char *record
+         s_rec = popen(cmd, "wb");
+         if (!s_rec) { fprintf(stderr, "error: cannot start ffmpeg for --record\n"); return -1; }
+     }
+-    return headless ? 0 : window_open(title, scale);
++    return headless ? 0 : window_open(title, scale, fullscreen);
+ }
+ 
+ bool platform_frame(const uint32_t *fb, ng_input_t *in) {
+diff --git a/src/video.c b/src/video.c
+index 8896d12..e1d4850 100644
+--- a/src/video.c
++++ b/src/video.c
+@@ -25,6 +25,7 @@ static uint32_t s_pens[2][0x1000];
+ static int      s_pal_bank;
+ 
+ static uint8_t *s_spr;          /* decoded sprites: 256 bytes per tile */
++static uint32_t s_spr_tiles;
+ static uint32_t s_spr_tiles_mask;
+ static uint8_t *s_fix_cart, *s_fix_bios;
+ static size_t   s_fix_cart_tiles;
+@@ -98,6 +99,7 @@ static void decode_sprites(const uint8_t *crom, size_t size) {
+      * lines above the fitted ROMs are simply not connected. */
+     uint32_t pow2 = 1;
+     while (pow2 < tiles) pow2 <<= 1;
++    s_spr_tiles = (uint32_t)tiles;
+     s_spr_tiles_mask = pow2 - 1;
+ }
+ 
+@@ -189,7 +191,12 @@ static void draw_sprites(int scanline, uint32_t *row) {
+         else if (attr & 0x0004) code = (code & ~3u) | (lspc_anim_counter & 3);
+         if (attr & 0x0002) tile_row ^= 0x0F;
+ 
+-        const uint8_t *gfx = s_spr + ((size_t)(code & s_spr_tiles_mask) << 8) + (tile_row << 4);
++        code &= s_spr_tiles_mask;
++        /* The mask rounds up to a power of two, while the fitted C ROMs can
++         * be smaller (a 48 MB cart has 393216 tiles).  An address line that
++         * is not connected must not read past the decoded data. */
++        if (code >= s_spr_tiles) continue;
++        const uint8_t *gfx = s_spr + ((size_t)code << 8) + (tile_row << 4);
+         const uint32_t *pal = pens + ((attr >> 8) << 4);
+         const uint8_t *zx = s_zoom_x[zoom_x];
+         int px = x;
+diff --git a/src/window_sdl.c b/src/window_sdl.c
+index 20d2e65..a2a854d 100644
+--- a/src/window_sdl.c
++++ b/src/window_sdl.c
+@@ -4,7 +4,8 @@
+  * headless stubs.
+  *
+  * Keys: arrows, Z/X/C/V = A/B/C/D, 1/2 = start P1/P2, 3 = select,
+- * 5/6 = coin 1/2, 9 = service, F2 = test switch, Esc = quit.
++ * 5/6 = coin 1/2, 9 = service, F2 = test switch, F11/Alt+Enter toggles
++ * fullscreen, Esc = quit.
+  *
+  * Gamepads (SDL's GameController layout, so any pad SDL knows): the first
+  * connected is player 1, the second player 2, plugged in at any time.
+@@ -24,6 +25,7 @@ static SDL_Texture *s_tex;
+ static uint64_t s_next_tick;
+ static SDL_AudioDeviceID s_audio;
+ static SDL_GameController *s_pad[2];     /* player 1, player 2 */
++static int s_fullscreen;
+ 
+ /* ponytail: a fixed layout; remapping belongs to the frontend (ROADMAP.md) */
+ static void pad_added(int index) {
+@@ -43,17 +45,21 @@ static void pad_removed(SDL_JoystickID id) {
+         }
+ }
+ 
+-int window_open(const char *title, int scale) {
++int window_open(const char *title, int scale, int fullscreen) {
+     if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+         fprintf(stderr, "error: SDL_Init: %s\n", SDL_GetError());
+         return -1;
+     }
++    s_fullscreen = fullscreen;
++    Uint32 flags = SDL_WINDOW_RESIZABLE;
++    if (s_fullscreen) flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+     s_win = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+-                             NG_SCREEN_W * scale, NG_SCREEN_H * scale, SDL_WINDOW_RESIZABLE);
++                             NG_SCREEN_W * scale, NG_SCREEN_H * scale, flags);
+     s_ren = SDL_CreateRenderer(s_win, -1, SDL_RENDERER_ACCELERATED);
+-    SDL_RenderSetLogicalSize(s_ren, NG_SCREEN_W, NG_SCREEN_H);
+     s_tex = SDL_CreateTexture(s_ren, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING,
+                               NG_SCREEN_W, NG_SCREEN_H);
++    /* Keep the 320x224 pixels crisp when scaled. */
++    SDL_SetTextureScaleMode(s_tex, SDL_ScaleModeNearest);
+     s_next_tick = SDL_GetPerformanceCounter();
+     /* Sound at the YM2610's own rate; SDL converts it for the device. A
+      * missing audio device leaves the game silent, not stopped. */
+@@ -128,6 +134,12 @@ bool window_frame(const uint32_t *fb, ng_input_t *in) {
+     while (SDL_PollEvent(&e)) {
+         if (e.type == SDL_QUIT) return false;
+         if (e.type == SDL_KEYDOWN && e.key.keysym.sym == SDLK_ESCAPE) return false;
++        if (e.type == SDL_KEYDOWN &&
++            (e.key.keysym.sym == SDLK_F11 ||
++             (e.key.keysym.sym == SDLK_RETURN && (e.key.keysym.mod & KMOD_ALT)))) {
++            s_fullscreen = !s_fullscreen;
++            SDL_SetWindowFullscreen(s_win, s_fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
++        }
+         if (e.type == SDL_CONTROLLERDEVICEADDED) pad_added(e.cdevice.which);
+         if (e.type == SDL_CONTROLLERDEVICEREMOVED) pad_removed(e.cdevice.which);
+     }
+@@ -137,7 +149,17 @@ bool window_frame(const uint32_t *fb, ng_input_t *in) {
+     if (fb) {
+         SDL_UpdateTexture(s_tex, NULL, fb, NG_SCREEN_W * 4);
+         SDL_RenderClear(s_ren);
+-        SDL_RenderCopy(s_ren, s_tex, NULL, NULL);
++        /* Fit the board's 10:7 picture inside the window with a uniform
++         * scale, centred: pillarboxed on 16:10 Steam Deck screens,
++         * letterboxed on 16:9, never stretched. */
++        int ww = NG_SCREEN_W, wh = NG_SCREEN_H;
++        SDL_GetRendererOutputSize(s_ren, &ww, &wh);
++        float sx = (float)ww / NG_SCREEN_W, sy = (float)wh / NG_SCREEN_H;
++        float scale = sx < sy ? sx : sy;
++        int dw = (int)(NG_SCREEN_W * scale + 0.5f);
++        int dh = (int)(NG_SCREEN_H * scale + 0.5f);
++        SDL_Rect dst = { (ww - dw) / 2, (wh - dh) / 2, dw, dh };
++        SDL_RenderCopy(s_ren, s_tex, NULL, &dst);
+         SDL_RenderPresent(s_ren);
+     }
+     /* Pace to the MVS refresh rate, 59.1856 Hz. */
